@@ -24,8 +24,9 @@ function showSection(sectionId) {
 }
 
 function getAccessToken() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const token = urlParams.get('access_token') || localStorage.getItem('discord_access_token');
+    // Don't check URL params here - only check localStorage
+    const token = localStorage.getItem('discord_access_token');
+    console.log('Getting access token:', token ? 'Token found in localStorage' : 'No token in localStorage');
     return token;
 }
 
@@ -228,13 +229,16 @@ function displayUserInfo() {
 }
 
 async function loadServersWithBotStatus() {
+    console.log('Starting to load servers with bot status');
     const serversGrid = document.getElementById('servers-grid');
     serversGrid.innerHTML = '';
 
     for (const server of userServers) {
+        console.log('Creating card for server:', server.name);
         const serverCard = createServerCard(server);
         serversGrid.appendChild(serverCard);
     }
+    console.log('Finished loading server cards');
 }
 
 function createServerCard(server) {
@@ -259,28 +263,43 @@ function createServerCard(server) {
         </div>
     `;
 
-    checkBotInServer(server.id).then(isInServer => {
-        const statusElement = card.querySelector('.server-status');
-        const indicator = statusElement.querySelector('.status-indicator');
-        const text = statusElement.querySelector('span:last-child');
+    // Don't check bot status immediately - this might be causing the issue
+    // Let's delay it to see if that's what's causing the redirect
+    setTimeout(async () => {
+        try {
+            console.log('Delayed bot check for:', server.name);
+            const isInServer = await checkBotInServer(server.id);
+            const statusElement = card.querySelector('.server-status');
+            if (statusElement) {
+                const indicator = statusElement.querySelector('.status-indicator');
+                const text = statusElement.querySelector('span:last-child');
 
-        if (isInServer) {
-            indicator.className = 'status-indicator online';
-            text.textContent = 'Bot is active';
-        } else {
-            indicator.className = 'status-indicator offline';
-            text.textContent = 'Bot not in server';
+                if (isInServer) {
+                    indicator.className = 'status-indicator online';
+                    text.textContent = 'Bot is active';
+                } else {
+                    indicator.className = 'status-indicator offline';
+                    text.textContent = 'Bot not in server';
+                }
+            }
+        } catch (error) {
+            console.error('Error in delayed bot check:', error);
         }
-    });
+    }, 1000); // Wait 1 second before checking bot status
 
     return card;
 }
 
 async function checkBotInServer(serverId) {
     try {
+        console.log('Checking bot status for server:', serverId);
         const members = await makeDiscordRequest(`/guilds/${serverId}/members`);
-        return members.some(member => member.user.id === BOT_ID);
+        const botPresent = members.some(member => member.user.id === BOT_ID);
+        console.log('Bot present in server', serverId, ':', botPresent);
+        return botPresent;
     } catch (error) {
+        console.error('Error checking bot in server', serverId, ':', error.message);
+        // Don't let this error crash everything
         return false;
     }
 }
@@ -452,6 +471,8 @@ function logout() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    console.log('DOM loaded, initializing app');
+    
     document.getElementById('discord-login').addEventListener('click', login);
     document.getElementById('logout-btn').addEventListener('click', logout);
     document.getElementById('close-modal').addEventListener('click', () => {
@@ -472,14 +493,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
+    console.log('Checking for callback...');
     if (await handleCallback()) {
+        console.log('Callback handled successfully');
         return;
     }
 
+    console.log('No callback, checking for existing token...');
     const token = getAccessToken();
     if (token) {
+        console.log('Found existing token, loading user data');
         await loadUserData();
     } else {
+        console.log('No token found, showing login');
         showSection('login-section');
     }
 });
