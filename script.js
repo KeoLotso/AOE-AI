@@ -110,11 +110,11 @@ async function login() {
     const params = new URLSearchParams({
         client_id: CLIENT_ID,
         redirect_uri: REDIRECT_URI,
-        response_type: 'token', // Use implicit flow only
-        scope: 'identify guilds'
+        response_type: 'token',
+        scope: 'identify guilds bot'
     });
 
-    console.log('Redirecting to Discord OAuth with implicit flow');
+    console.log('Redirecting to Discord OAuth with bot scope');
     window.location.href = `https://discord.com/api/oauth2/authorize?${params}`;
 }
 
@@ -292,76 +292,84 @@ function createServerCard(server) {
 }
 
 async function checkBotInServer(serverId) {
-    console.log('=== Starting bot status check for server:', serverId, '===');
+    console.log('=== Checking bot status for server:', serverId, '===');
     
     try {
-        // Method 1: Check if bot is in guild members (most reliable)
-        console.log('Method 1: Checking guild members...');
-        try {
-            const members = await makeDiscordRequest(`/guilds/${serverId}/members?limit=1000`, 'GET', null, true);
-            console.log(`Found ${members.length} members in guild`);
-            
-            const botMember = members.find(member => member.user && member.user.id === BOT_ID);
-            if (botMember) {
-                console.log('✅ Bot found in guild members list');
-                return true;
-            } else {
-                console.log('❌ Bot not found in guild members list');
-            }
-        } catch (error) {
-            console.log('Method 1 failed:', error.message);
-        }
-
-        // Method 2: Direct member lookup
-        console.log('Method 2: Direct member lookup...');
-        try {
-            const botMember = await makeDiscordRequest(`/guilds/${serverId}/members/${BOT_ID}`, 'GET', null, true);
-            if (botMember && botMember.user && botMember.user.id === BOT_ID) {
-                console.log('✅ Bot found via direct member lookup');
-                return true;
-            }
-        } catch (error) {
-            console.log('Method 2 failed:', error.message);
-            if (error.message.includes('404')) {
-                console.log('404 error means bot is definitely not in server');
-            }
-        }
-
-        // Method 3: Check bot's guilds (requires bot token - this won't work with user token)
-        console.log('Method 3: Checking via Supabase database...');
+        // Method 1: Check Supabase database first (most reliable)
+        console.log('Method 1: Checking database records...');
         try {
             const config = await makeSupabaseRequest('AOE DiscordBot', 'GET', null, {
                 'serverID': `eq.${serverId}`,
-                'select': 'serverID'
+                'select': 'serverID,lastActive'
             });
+            
             if (config && config.length > 0) {
-                console.log('✅ Bot config found in database - bot was in server at some point');
-                // Note: This doesn't guarantee the bot is still in the server
-                console.log('⚠️  Database entry exists but bot might have been removed');
+                console.log('✅ Bot configuration found in database');
+                // If there's a recent lastActive timestamp, bot is likely active
+                return true;
             }
         } catch (error) {
-            console.log('Method 3 failed:', error.message);
+            console.log('Database check failed:', error.message);
         }
 
-        // Method 4: Try to get detailed guild info (requires bot to be in server)
-        console.log('Method 4: Checking guild accessibility...');
+        // Method 2: Try to check if we can see any bot activity
+        console.log('Method 2: Checking recent bot activity...');
+        try {
+            // Get recent messages from a channel to see bot activity
+            const channels = await makeDiscordRequest(`/guilds/${serverId}/channels`, 'GET', null, true);
+            const textChannels = channels.filter(ch => ch.type === 0);
+            
+            if (textChannels.length > 0) {
+                // Check the first available channel for recent messages
+                const messages = await makeDiscordRequest(`/channels/${textChannels[0].id}/messages?limit=50`, 'GET', null, true);
+                const botMessages = messages.filter(msg => msg.author && msg.author.id === BOT_ID);
+                
+                if (botMessages.length > 0) {
+                    console.log('✅ Found recent bot messages - bot is active');
+                    return true;
+                }
+            }
+        } catch (error) {
+            console.log('Message check failed:', error.message);
+        }
+
+        // Method 3: Alternative - check if bot has slash commands registered
+        console.log('Method 3: Checking application commands...');
+        try {
+            const commands = await makeDiscordRequest(`/applications/${CLIENT_ID}/guilds/${serverId}/commands`, 'GET', null, true);
+            if (commands && commands.length > 0) {
+                console.log('✅ Bot has registered slash commands - bot is present');
+                return true;
+            }
+        } catch (error) {
+            console.log('Commands check failed:', error.message);
+        }
+
+        // Method 4: Last resort - assume bot is present if user can manage it
+        console.log('Method 4: Checking user permissions...');
         try {
             const guild = await makeDiscordRequest(`/guilds/${serverId}`, 'GET', null, true);
-            console.log('Guild info accessible:', guild.name);
-            // If we can get guild info, the bot (or user) has access
-            // But this doesn't specifically confirm the bot is there
+            if (guild && guild.owner_id) {
+                console.log('ℹ️  User has guild access - cannot definitively confirm bot status');
+                // Return true if database has config (bot was invited at some point)
+                const hasConfig = await makeSupabaseRequest('AOE DiscordBot', 'GET', null, {
+                    'serverID': `eq.${serverId}`
+                });
+                return hasConfig && hasConfig.length > 0;
+            }
         } catch (error) {
-            console.log('Method 4 failed:', error.message);
+            console.log('Guild check failed:', error.message);
         }
 
-        console.log('❌ Bot not detected in server', serverId);
+        console.log('❌ Bot not detected in server');
         return false;
         
     } catch (error) {
-        console.error('❌ Critical error in bot status check:', error);
+        console.error('❌ Error checking bot status:', error);
         return false;
     }
 }
+
 async function checkUserBotPermissions(serverId) {
     try {
         // Check if the current user has administrator or manage server permissions
@@ -394,76 +402,140 @@ async function openServerConfig(serverId) {
     
     document.getElementById('config-server-name').textContent = server.name;
     
-    console.log('=== Opening server config for:', server.name, '===');
-    
     try {
-        showLoading();
-        
-        // First check if user has permissions
-        const hasPermissions = await checkUserBotPermissions(serverId);
-        console.log('User has bot management permissions:', hasPermissions);
-        
-        // Check bot status
-        const isInServer = await checkBotInServer(serverId);
-        console.log('Bot in server result:', isInServer);
+        // Use the simple check method
+        const isConfigured = await checkBotInServerSimple(serverId);
         
         const botStatus = document.getElementById('bot-status');
         const settingsSection = document.getElementById('settings-section');
         
-        if (isInServer) {
+        if (isConfigured) {
             botStatus.innerHTML = `
                 <span class="status-indicator online"></span>
-                <span>Bot is active in this server</span>
+                <span>Bot is configured for this server</span>
+                <button id="refresh-status" class="invite-btn" style="margin-left: 10px; font-size: 12px;">Refresh</button>
             `;
             settingsSection.style.display = 'block';
             await loadServerConfig(serverId);
             await loadServerChannels(serverId);
+            
+            // Add refresh button functionality
+            document.getElementById('refresh-status').onclick = () => {
+                location.reload(); // Simple refresh
+            };
         } else {
             botStatus.innerHTML = `
                 <span class="status-indicator offline"></span>
-                <span>Bot not detected in server</span>
+                <span>Bot not configured</span>
                 <button id="invite-bot" class="invite-btn">Invite Bot</button>
-                <button id="refresh-status" class="invite-btn" style="margin-left: 10px;">Refresh Status</button>
+                <button id="mark-present" class="save-btn" style="margin-left: 10px; font-size: 12px;">Bot is Present</button>
             `;
             settingsSection.style.display = 'none';
             
-            // Add event listeners for buttons
             document.getElementById('invite-bot').onclick = () => {
-                const permissions = 2048 + 32768 + 268435456; // Send Messages + Use Slash Commands + Use External Emojis
+                const permissions = 2048 + 32768 + 268435456; // Basic bot permissions
                 const inviteUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=${permissions}&scope=bot%20applications.commands&guild_id=${serverId}`;
-                console.log('Opening invite URL:', inviteUrl);
                 window.open(inviteUrl, '_blank');
             };
             
-            document.getElementById('refresh-status').onclick = async () => {
-                console.log('Refreshing bot status...');
-                await openServerConfig(serverId); // Recursively call to refresh
+            // Add "Bot is Present" button for manual confirmation
+            document.getElementById('mark-present').onclick = async () => {
+                try {
+                    // Create a basic config entry to mark bot as present
+                    await makeSupabaseRequest('AOE DiscordBot', 'POST', {
+                        serverID: serverId,
+                        whitelistedOnly: false,
+                        whitelistedChannels: JSON.stringify([])
+                    });
+                    
+                    alert('Bot marked as present! Refreshing...');
+                    await openServerConfig(serverId); // Refresh the modal
+                } catch (error) {
+                    console.error('Error marking bot as present:', error);
+                    alert('Error updating bot status');
+                }
             };
         }
         
     } catch (error) {
-        console.error('Error in openServerConfig:', error);
-        
+        console.error('Error opening server config:', error);
+        // Show error state
         const botStatus = document.getElementById('bot-status');
-        const settingsSection = document.getElementById('settings-section');
-        
         botStatus.innerHTML = `
             <span class="status-indicator offline"></span>
-            <span>Error checking bot status: ${error.message}</span>
-            <button id="invite-bot" class="invite-btn">Invite Bot Anyway</button>
+            <span>Error checking bot status</span>
+            <button id="invite-bot" class="invite-btn">Invite Bot</button>
         `;
-        settingsSection.style.display = 'none';
         
         document.getElementById('invite-bot').onclick = () => {
             const permissions = 2048 + 32768 + 268435456;
             const inviteUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=${permissions}&scope=bot%20applications.commands&guild_id=${serverId}`;
             window.open(inviteUrl, '_blank');
         };
-    } finally {
-        hideLoading();
     }
     
     document.getElementById('server-config').classList.remove('hidden');
+}
+
+async function checkBotInServerHybrid(serverId) {
+    console.log('=== Hybrid bot check for server:', serverId, '===');
+    
+    try {
+        // Step 1: Check if bot config exists in database
+        const config = await makeSupabaseRequest('AOE DiscordBot', 'GET', null, {
+            'serverID': `eq.${serverId}`,
+            'select': '*'
+        });
+        
+        const hasConfig = config && config.length > 0;
+        console.log('Has database config:', hasConfig);
+        
+        // Step 2: Try basic Discord API calls to see what works
+        let canAccessGuild = false;
+        try {
+            const guild = await makeDiscordRequest(`/guilds/${serverId}`, 'GET', null, true);
+            canAccessGuild = guild && guild.id === serverId;
+            console.log('Can access guild details:', canAccessGuild);
+        } catch (error) {
+            console.log('Cannot access guild details');
+        }
+        
+        // Step 3: Try to access channels
+        let canAccessChannels = false;
+        try {
+            const channels = await makeDiscordRequest(`/guilds/${serverId}/channels`, 'GET', null, true);
+            canAccessChannels = channels && channels.length > 0;
+            console.log('Can access channels:', canAccessChannels);
+        } catch (error) {
+            console.log('Cannot access channels');
+        }
+        
+        // Decision logic: If we have config AND can access guild data, assume bot is present
+        const botLikelyPresent = hasConfig && (canAccessGuild || canAccessChannels);
+        
+        console.log('Final decision - Bot likely present:', botLikelyPresent);
+        return botLikelyPresent;
+        
+    } catch (error) {
+        console.error('Hybrid check failed:', error);
+        return false;
+    }
+}
+async function checkBotInServerSimple(serverId) {
+    try {
+        // Just check if bot has been configured for this server
+        const config = await makeSupabaseRequest('AOE DiscordBot', 'GET', null, {
+            'serverID': `eq.${serverId}`
+        });
+        
+        const isConfigured = config && config.length > 0;
+        console.log(`Bot configured for server ${serverId}:`, isConfigured);
+        
+        return isConfigured;
+    } catch (error) {
+        console.error('Error checking bot config:', error);
+        return false;
+    }
 }
 
 async function loadServerConfig(serverId) {
