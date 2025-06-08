@@ -38,7 +38,7 @@ function removeAccessToken() {
     localStorage.removeItem('discord_access_token');
 }
 
-async function makeDiscordRequest(endpoint, method = 'GET', body = null) {
+async function makeDiscordRequest(endpoint, method = 'GET', body = null, skipErrorRedirect = false) {
     const token = getAccessToken();
     if (!token) {
         console.error('No access token available');
@@ -67,7 +67,8 @@ async function makeDiscordRequest(endpoint, method = 'GET', body = null) {
         const errorText = await response.text();
         console.error(`Discord API error for ${endpoint}:`, response.status, errorText);
         
-        if (response.status === 401) {
+        // Only redirect to login for critical errors and when not skipping redirect
+        if (response.status === 401 && !skipErrorRedirect) {
             console.log('Unauthorized - removing token');
             removeAccessToken();
             showSection('login-section');
@@ -259,15 +260,14 @@ function createServerCard(server) {
         </div>
         <div class="server-status">
             <span class="status-indicator offline"></span>
-            <span>Checking bot status...</span>
+            <span>Bot status unknown</span>
         </div>
     `;
 
-    // Don't check bot status immediately - this might be causing the issue
-    // Let's delay it to see if that's what's causing the redirect
+    // Check bot status with error handling that doesn't redirect
     setTimeout(async () => {
         try {
-            console.log('Delayed bot check for:', server.name);
+            console.log('Checking bot status for:', server.name);
             const isInServer = await checkBotInServer(server.id);
             const statusElement = card.querySelector('.server-status');
             if (statusElement) {
@@ -283,9 +283,10 @@ function createServerCard(server) {
                 }
             }
         } catch (error) {
-            console.error('Error in delayed bot check:', error);
+            console.error('Error checking bot status for', server.name, ':', error.message);
+            // Don't update the UI if there's an error - leave it as "Bot status unknown"
         }
-    }, 1000); // Wait 1 second before checking bot status
+    }, Math.random() * 2000 + 1000); // Random delay between 1-3 seconds to avoid rate limiting
 
     return card;
 }
@@ -293,13 +294,14 @@ function createServerCard(server) {
 async function checkBotInServer(serverId) {
     try {
         console.log('Checking bot status for server:', serverId);
-        const members = await makeDiscordRequest(`/guilds/${serverId}/members`);
+        // Use skipErrorRedirect=true to prevent redirecting to login on error
+        const members = await makeDiscordRequest(`/guilds/${serverId}/members`, 'GET', null, true);
         const botPresent = members.some(member => member.user.id === BOT_ID);
         console.log('Bot present in server', serverId, ':', botPresent);
         return botPresent;
     } catch (error) {
         console.error('Error checking bot in server', serverId, ':', error.message);
-        // Don't let this error crash everything
+        // Return false instead of throwing error to prevent cascading failures
         return false;
     }
 }
@@ -310,23 +312,42 @@ async function openServerConfig(serverId) {
     
     document.getElementById('config-server-name').textContent = server.name;
     
-    const isInServer = await checkBotInServer(serverId);
-    
-    const botStatus = document.getElementById('bot-status');
-    const settingsSection = document.getElementById('settings-section');
-    
-    if (isInServer) {
-        botStatus.innerHTML = `
-            <span class="status-indicator online"></span>
-            <span>Bot is active in this server</span>
-        `;
-        settingsSection.style.display = 'block';
-        await loadServerConfig(serverId);
-        await loadServerChannels(serverId);
-    } else {
+    try {
+        const isInServer = await checkBotInServer(serverId);
+        
+        const botStatus = document.getElementById('bot-status');
+        const settingsSection = document.getElementById('settings-section');
+        
+        if (isInServer) {
+            botStatus.innerHTML = `
+                <span class="status-indicator online"></span>
+                <span>Bot is active in this server</span>
+            `;
+            settingsSection.style.display = 'block';
+            await loadServerConfig(serverId);
+            await loadServerChannels(serverId);
+        } else {
+            botStatus.innerHTML = `
+                <span class="status-indicator offline"></span>
+                <span>Bot not in server</span>
+                <button id="invite-bot" class="invite-btn">Invite Bot</button>
+            `;
+            settingsSection.style.display = 'none';
+            
+            document.getElementById('invite-bot').onclick = () => {
+                const inviteUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=2048&scope=bot%20applications.commands&guild_id=${serverId}`;
+                window.open(inviteUrl, '_blank');
+            };
+        }
+    } catch (error) {
+        console.error('Error opening server config:', error);
+        // Show error state instead of crashing
+        const botStatus = document.getElementById('bot-status');
+        const settingsSection = document.getElementById('settings-section');
+        
         botStatus.innerHTML = `
             <span class="status-indicator offline"></span>
-            <span>Bot not in server</span>
+            <span>Unable to check bot status</span>
             <button id="invite-bot" class="invite-btn">Invite Bot</button>
         `;
         settingsSection.style.display = 'none';
@@ -374,10 +395,10 @@ async function loadServerConfig(serverId) {
 
 async function loadServerChannels(serverId) {
     try {
-        const channels = await makeDiscordRequest(`/guilds/${serverId}/channels`);
+        // Use skipErrorRedirect=true to prevent redirecting on permission errors
+        const channels = await makeDiscordRequest(`/guilds/${serverId}/channels`, 'GET', null, true);
         const textChannels = channels.filter(channel => 
-            channel.type === 0 && 
-            (channel.permissions & 0x800) !== 0
+            channel.type === 0
         );
 
         const channelsList = document.getElementById('channels-list');
@@ -394,6 +415,9 @@ async function loadServerChannels(serverId) {
         });
     } catch (error) {
         console.error('Failed to load server channels:', error);
+        // Show an error message in the channels list
+        const channelsList = document.getElementById('channels-list');
+        channelsList.innerHTML = '<p style="color: #666;">Unable to load channels. You may need additional permissions.</p>';
     }
 }
 
