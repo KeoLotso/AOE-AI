@@ -268,7 +268,7 @@ function createServerCard(server) {
     setTimeout(async () => {
         try {
             console.log('Checking bot status for:', server.name);
-            const isInServer = await checkBotInServer(server.id);
+            const isInServer = await checkBotInServerSimple(server.id);
             const statusElement = card.querySelector('.server-status');
             if (statusElement) {
                 const indicator = statusElement.querySelector('.status-indicator');
