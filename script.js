@@ -39,7 +39,12 @@ function removeAccessToken() {
 
 async function makeDiscordRequest(endpoint, method = 'GET', body = null) {
     const token = getAccessToken();
-    if (!token) throw new Error('No access token');
+    if (!token) {
+        console.error('No access token available');
+        throw new Error('No access token');
+    }
+
+    console.log(`Making Discord API request to: ${endpoint}`);
 
     const options = {
         method,
@@ -55,16 +60,24 @@ async function makeDiscordRequest(endpoint, method = 'GET', body = null) {
 
     const response = await fetch(`https://discord.com/api/v10${endpoint}`, options);
     
+    console.log(`Response status for ${endpoint}:`, response.status);
+    
     if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Discord API error for ${endpoint}:`, response.status, errorText);
+        
         if (response.status === 401) {
+            console.log('Unauthorized - removing token');
             removeAccessToken();
             showSection('login-section');
-            throw new Error('Unauthorized');
+            throw new Error('Unauthorized - token may be expired');
         }
-        throw new Error(`Discord API error: ${response.status}`);
+        throw new Error(`Discord API error: ${response.status} - ${errorText}`);
     }
 
-    return response.json();
+    const data = await response.json();
+    console.log(`Successful response for ${endpoint}:`, data);
+    return data;
 }
 
 async function makeSupabaseRequest(endpoint, method = 'GET', body = null, params = null) {
@@ -95,10 +108,11 @@ async function login() {
     const params = new URLSearchParams({
         client_id: CLIENT_ID,
         redirect_uri: REDIRECT_URI,
-        response_type: 'token', // Changed from 'code' to 'token' for implicit flow
+        response_type: 'token', // Use implicit flow only
         scope: 'identify guilds'
     });
 
+    console.log('Redirecting to Discord OAuth with implicit flow');
     window.location.href = `https://discord.com/api/oauth2/authorize?${params}`;
 }
 
@@ -111,14 +125,20 @@ async function handleCallback() {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
 
+    console.log('Checking callback - Hash:', window.location.hash, 'Search:', window.location.search);
+    console.log('Access token from hash:', accessToken ? 'Found' : 'Not found');
+    console.log('Code from params:', code ? 'Found' : 'Not found');
+
     if (accessToken) {
         // Implicit flow - token directly in URL
+        console.log('Using implicit flow token');
         setAccessToken(accessToken);
         window.history.replaceState({}, document.title, window.location.pathname);
         await loadUserData();
         return true;
     } else if (code) {
         // Authorization code flow
+        console.log('Using authorization code flow');
         try {
             showLoading();
             
@@ -136,11 +156,16 @@ async function handleCallback() {
                 })
             });
 
+            console.log('Token exchange response status:', tokenResponse.status);
+
             if (!tokenResponse.ok) {
-                throw new Error('Failed to get access token');
+                const errorText = await tokenResponse.text();
+                console.error('Token exchange failed:', errorText);
+                throw new Error(`Failed to get access token: ${tokenResponse.status}`);
             }
 
             const tokenData = await tokenResponse.json();
+            console.log('Token data received:', tokenData.access_token ? 'Token present' : 'No token');
             setAccessToken(tokenData.access_token);
 
             window.history.replaceState({}, document.title, window.location.pathname);
@@ -149,13 +174,14 @@ async function handleCallback() {
             return true;
         } catch (error) {
             console.error('OAuth callback error:', error);
-            alert('Login failed. Please try again.');
+            alert('Login failed. Please try again. Check console for details.');
             return false;
         } finally {
             hideLoading();
         }
     }
     
+    console.log('No callback parameters found');
     return false;
 }
 
@@ -163,18 +189,28 @@ async function loadUserData() {
     try {
         showLoading();
         
+        console.log('Loading user data with token:', getAccessToken() ? 'Token exists' : 'No token');
+        
         currentUser = await makeDiscordRequest('/users/@me');
+        console.log('User loaded:', currentUser.username);
+        
         userServers = await makeDiscordRequest('/users/@me/guilds');
+        console.log('Servers loaded:', userServers.length);
 
         userServers = userServers.filter(guild => 
             (guild.permissions & 0x20) === 0x20
         );
+        console.log('Admin servers:', userServers.length);
 
         displayUserInfo();
         await loadServersWithBotStatus();
         showSection('main-section');
     } catch (error) {
         console.error('Failed to load user data:', error);
+        console.error('Error details:', error.message);
+        
+        // Don't immediately redirect to login, let's see the error first
+        alert(`Error loading data: ${error.message}. Check console for details.`);
         showSection('login-section');
     } finally {
         hideLoading();
