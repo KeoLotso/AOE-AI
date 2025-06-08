@@ -294,14 +294,47 @@ function createServerCard(server) {
 async function checkBotInServer(serverId) {
     try {
         console.log('Checking bot status for server:', serverId);
-        // Use skipErrorRedirect=true to prevent redirecting to login on error
-        const members = await makeDiscordRequest(`/guilds/${serverId}/members`, 'GET', null, true);
-        const botPresent = members.some(member => member.user.id === BOT_ID);
-        console.log('Bot present in server', serverId, ':', botPresent);
-        return botPresent;
+        
+        // Method 1: Try to get the bot member directly
+        try {
+            const botMember = await makeDiscordRequest(`/guilds/${serverId}/members/${BOT_ID}`, 'GET', null, true);
+            if (botMember && botMember.user) {
+                console.log('Bot found in server', serverId, 'via direct member lookup');
+                return true;
+            }
+        } catch (error) {
+            console.log('Direct member lookup failed:', error.message);
+        }
+
+        // Method 2: Check via Supabase database
+        try {
+            const config = await makeSupabaseRequest('AOE DiscordBot', 'GET', null, {
+                'serverID': `eq.${serverId}`,
+                'select': 'serverID'
+            });
+            if (config && config.length > 0) {
+                console.log('Bot config found in database for server', serverId);
+                return true;
+            }
+        } catch (error) {
+            console.log('Database check failed:', error.message);
+        }
+
+        // Method 3: Try to get guild info (bot needs to be in server to get detailed info)
+        try {
+            const guild = await makeDiscordRequest(`/guilds/${serverId}`, 'GET', null, true);
+            if (guild && guild.id === serverId) {
+                console.log('Guild info accessible for server', serverId, '- bot likely present');
+                return true;
+            }
+        } catch (error) {
+            console.log('Guild info check failed:', error.message);
+        }
+
+        console.log('Bot not found in server', serverId);
+        return false;
     } catch (error) {
         console.error('Error checking bot in server', serverId, ':', error.message);
-        // Return false instead of throwing error to prevent cascading failures
         return false;
     }
 }
