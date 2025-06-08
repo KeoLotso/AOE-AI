@@ -90,12 +90,12 @@ async function makeSupabaseRequest(endpoint, method = 'GET', body = null, params
 }
 
 async function login() {
-    const params = new URLSearchParams({
-        client_id: CLIENT_ID,
-        redirect_uri: REDIRECT_URI,
-        response_type: 'code',
-        scope: 'identify guilds'
-    });
+const params = new URLSearchParams({
+    client_id: CLIENT_ID,
+    redirect_uri: REDIRECT_URI,
+    response_type: 'code',
+    scope: 'identify guilds'
+});
 
     window.location.href = `https://discord.com/api/oauth2/authorize?${params}`;
 }
