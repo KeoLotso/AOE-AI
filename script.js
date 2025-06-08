@@ -1,6 +1,6 @@
 const CLIENT_ID = '1380895640556408862';
 const BOT_ID = '1380895640556408862';
-const REDIRECT_URI = https://keolotso.github.io/;
+const REDIRECT_URI = window.location.origin;
 const SUPABASE_URL = 'https://apqeitnavsjwqrpruuqq.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFwcWVpdG5hdnNqd3FycHJ1dXFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQxMDUzMzYsImV4cCI6MjA1OTY4MTMzNn0.G14iwTdC2qpCsRTw3-JcKTowx4yRWJPpObGGWIr65lQ';
 
