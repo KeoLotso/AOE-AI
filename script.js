@@ -1,6 +1,6 @@
 const CLIENT_ID = '1380895640556408862';
 const BOT_ID = '1380895640556408862';
-const REDIRECT_URI = 'https://keolotso.github.io/AOE-AI';
+const REDIRECT_URI = 'https://keolotso.github.io/AOE-AI'; // Removed trailing slash
 const SUPABASE_URL = 'https://apqeitnavsjwqrpruuqq.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFwcWVpdG5hdnNqd3FycHJ1dXFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQxMDUzMzYsImV4cCI6MjA1OTY4MTMzNn0.G14iwTdC2qpCsRTw3-JcKTowx4yRWJPpObGGWIr65lQ';
 
@@ -24,7 +24,9 @@ function showSection(sectionId) {
 }
 
 function getAccessToken() {
-    return localStorage.getItem('discord_access_token');
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('access_token') || localStorage.getItem('discord_access_token');
+    return token;
 }
 
 function setAccessToken(token) {
@@ -93,7 +95,7 @@ async function login() {
     const params = new URLSearchParams({
         client_id: CLIENT_ID,
         redirect_uri: REDIRECT_URI,
-        response_type: 'code',
+        response_type: 'token', // Changed from 'code' to 'token' for implicit flow
         scope: 'identify guilds'
     });
 
@@ -101,46 +103,60 @@ async function login() {
 }
 
 async function handleCallback() {
+    // Check for access token in URL hash (implicit flow)
+    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+    const accessToken = hashParams.get('access_token');
+    
+    // Check for authorization code in URL params (authorization code flow)
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
 
-    if (!code) return false;
-
-    try {
-        showLoading();
-        
-        const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: new URLSearchParams({
-                client_id: CLIENT_ID,
-                client_secret: 'cBn9ahP2cJtwJBQvoNSytV67qd-o43OX',
-                grant_type: 'authorization_code',
-                code: code,
-                redirect_uri: REDIRECT_URI
-            })
-        });
-
-        if (!tokenResponse.ok) {
-            throw new Error('Failed to get access token');
-        }
-
-        const tokenData = await tokenResponse.json();
-        setAccessToken(tokenData.access_token);
-
+    if (accessToken) {
+        // Implicit flow - token directly in URL
+        setAccessToken(accessToken);
         window.history.replaceState({}, document.title, window.location.pathname);
-        
         await loadUserData();
         return true;
-    } catch (error) {
-        console.error('OAuth callback error:', error);
-        alert('Login failed. Please try again.');
-        return false;
-    } finally {
-        hideLoading();
+    } else if (code) {
+        // Authorization code flow
+        try {
+            showLoading();
+            
+            const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: new URLSearchParams({
+                    client_id: CLIENT_ID,
+                    client_secret: 'cBn9ahP2cJtwJBQvoNSytV67qd-o43OX',
+                    grant_type: 'authorization_code',
+                    code: code,
+                    redirect_uri: REDIRECT_URI
+                })
+            });
+
+            if (!tokenResponse.ok) {
+                throw new Error('Failed to get access token');
+            }
+
+            const tokenData = await tokenResponse.json();
+            setAccessToken(tokenData.access_token);
+
+            window.history.replaceState({}, document.title, window.location.pathname);
+            
+            await loadUserData();
+            return true;
+        } catch (error) {
+            console.error('OAuth callback error:', error);
+            alert('Login failed. Please try again.');
+            return false;
+        } finally {
+            hideLoading();
+        }
     }
+    
+    return false;
 }
 
 async function loadUserData() {
