@@ -369,6 +369,9 @@ async function checkBotInServer(serverId) {
         return false;
     }
 }
+async function justSayYes(serverId){
+    return true
+}
 
 async function checkUserBotPermissions(serverId) {
     try {
@@ -404,7 +407,7 @@ async function openServerConfig(serverId) {
     
     try {
         // Use the simple check method
-        const isConfigured = await checkBotInServerSimple(serverId);
+        const isConfigured = await justSayYes(serverId);
         
         const botStatus = document.getElementById('bot-status');
         const settingsSection = document.getElementById('settings-section');
