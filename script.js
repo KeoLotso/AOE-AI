@@ -96,8 +96,8 @@ const params = new URLSearchParams({
     response_type: 'code',
     scope: 'identify guilds'
 });
+window.location.href = `https://discord.com/api/oauth2/authorize?${params.toString()}`;
 
-    window.location.href = `https://discord.com/api/oauth2/authorize?${params}`;
 }
 
 async function handleCallback() {
